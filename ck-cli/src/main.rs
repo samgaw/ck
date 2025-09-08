@@ -28,13 +28,13 @@ QUICK START EXAMPLES:
 
   Basic grep-style search (no indexing required):
     ck "error" src/                    # Find text matches
-    ck -i "TODO" .                     # Case-insensitive search  
+    ck -i "TODO" .                     # Case-insensitive search
     ck -r "fn main" .                  # Recursive search
     ck -n "import" lib.py              # Show line numbers
 
   Semantic search (finds conceptually similar code):
     ck --sem "error handling" src/     # Builds/updates the index automatically (top 10, threshold ≥0.6)
-    ck --sem "database connection"     # Find DB-related code  
+    ck --sem "database connection"     # Find DB-related code
     ck --sem --limit 5 "authentication"    # Limit to top 5 results
     ck --sem --threshold 0.8 "auth"   # Higher precision filtering
 
@@ -42,7 +42,7 @@ QUICK START EXAMPLES:
     ck --lex "user authentication"    # Full-text search with ranking
     ck --lex "http client request"    # Better than regex for phrases
 
-  Hybrid search (combines regex + semantic):  
+  Hybrid search (combines regex + semantic):
     ck --hybrid "async function"      # Best of both worlds
     ck --hybrid "error" --limit 10    # Top 10 most relevant results (--limit is alias for --topk)
     ck --hybrid "bug" --threshold 0.02 # Only results with RRF score >= 0.02
@@ -60,7 +60,7 @@ QUICK START EXAMPLES:
   JSON output for tools/scripts:
     ck --json --sem "bug fix" src/    # Traditional JSON (single array)
     ck --json --limit 5 "TODO"       # Limit results (--limit alias for --topk)
-    
+
   JSONL output for AI agents (recommended):
     ck --jsonl "auth" --no-snippet    # Streaming, memory-efficient format
     ck --jsonl --sem "error" src/     # Perfect for LLM/agent consumption
@@ -68,7 +68,7 @@ QUICK START EXAMPLES:
     # Why JSONL? Streaming, error-resilient, standard in AI pipelines
 
   Advanced grep features:
-    ck -C 2 "error" src/              # Show 2 lines of context  
+    ck -C 2 "error" src/              # Show 2 lines of context
     ck -A 3 -B 1 "TODO"              # 3 lines after, 1 before
     ck -w "test" .                    # Match whole words only
     ck -F "log.Error()" .             # Fixed string (no regex)
@@ -86,7 +86,7 @@ QUICK START EXAMPLES:
 
   SEARCH MODES:
   --regex   : Classic grep behavior (default, no index needed)
-  --lex     : BM25 lexical search (auto-indexed before it runs)  
+  --lex     : BM25 lexical search (auto-indexed before it runs)
   --sem     : Semantic/embedding search (auto-indexed, defaults: top 10, threshold ≥0.6)
   --hybrid  : Combines regex and semantic (shares the auto-indexing path)
 
@@ -96,7 +96,7 @@ RESULT FILTERING:
                       (0.0-1.0 semantic/lexical, 0.01-0.05 hybrid RRF)
   --scores          : Show scores in output [0.950] file:line:match
 
-The semantic search understands meaning - searching for "error handling" 
+The semantic search understands meaning - searching for "error handling"
 will find try/catch blocks, error returns, exception handling, etc.
 "#)]
 #[command(version)]
@@ -255,7 +255,7 @@ struct Cli {
 
     #[arg(
         long = "full-section",
-        help = "Return complete code sections (functions/classes) instead of just matching lines. Uses tree-sitter to identify semantic boundaries. Supported: Python, JavaScript, TypeScript, Haskell, Rust, Ruby"
+        help = "Return complete code sections (functions/classes) instead of just matching lines. Uses tree-sitter to identify semantic boundaries. Supported: Python, JavaScript, TypeScript, Haskell, Rust, Ruby, Elixir, HEEx"
     )]
     full_section: bool,
 
@@ -842,6 +842,8 @@ async fn inspect_file_metadata(file_path: &PathBuf, status: &StatusReporter) -> 
             ck_chunk::ChunkType::Class => "class",
             ck_chunk::ChunkType::Method => "method",
             ck_chunk::ChunkType::Module => "mod",
+            ck_chunk::ChunkType::TypeSpec => "type",
+            ck_chunk::ChunkType::Documentation => "doc",
             ck_chunk::ChunkType::Text => "text",
         };
 

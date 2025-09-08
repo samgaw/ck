@@ -1212,6 +1212,8 @@ fn index_single_file_with_progress(
                     ck_chunk::ChunkType::Class => Some("class".to_string()),
                     ck_chunk::ChunkType::Method => Some("method".to_string()),
                     ck_chunk::ChunkType::Module => Some("module".to_string()),
+                    ck_chunk::ChunkType::TypeSpec => Some("typespec".to_string()),
+                    ck_chunk::ChunkType::Documentation => Some("documentation".to_string()),
                     ck_chunk::ChunkType::Text => None,
                 };
 
@@ -1324,6 +1326,8 @@ fn index_single_file_with_progress(
                         ck_chunk::ChunkType::Class => Some("class".to_string()),
                         ck_chunk::ChunkType::Method => Some("method".to_string()),
                         ck_chunk::ChunkType::Module => Some("module".to_string()),
+                        ck_chunk::ChunkType::TypeSpec => Some("typespec".to_string()),
+                        ck_chunk::ChunkType::Documentation => Some("documentation".to_string()),
                         ck_chunk::ChunkType::Text => None,
                     };
                     let breadcrumb = chunk.metadata.breadcrumb.clone();
@@ -1367,6 +1371,8 @@ fn index_single_file_with_progress(
                     ck_chunk::ChunkType::Class => Some("class".to_string()),
                     ck_chunk::ChunkType::Method => Some("method".to_string()),
                     ck_chunk::ChunkType::Module => Some("module".to_string()),
+                    ck_chunk::ChunkType::TypeSpec => Some("typespec".to_string()),
+                    ck_chunk::ChunkType::Documentation => Some("documentation".to_string()),
                     ck_chunk::ChunkType::Text => None,
                 };
                 let breadcrumb = chunk.metadata.breadcrumb.clone();

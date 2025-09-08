@@ -116,13 +116,15 @@ pub struct Chunk {
     pub metadata: ChunkMetadata,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ChunkType {
     Text,
     Function,
     Class,
     Method,
     Module,
+    TypeSpec,
+    Documentation,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -136,6 +138,8 @@ pub enum ParseableLanguage {
     Go,
     CSharp,
     Zig,
+    Elixir,
+    Heex,
 }
 
 impl std::fmt::Display for ParseableLanguage {
@@ -150,6 +154,8 @@ impl std::fmt::Display for ParseableLanguage {
             ParseableLanguage::Go => "go",
             ParseableLanguage::CSharp => "csharp",
             ParseableLanguage::Zig => "zig",
+            ParseableLanguage::Elixir => "elixir",
+            ParseableLanguage::Heex => "heex",
         };
         write!(f, "{}", name)
     }
@@ -169,6 +175,8 @@ impl TryFrom<ck_core::Language> for ParseableLanguage {
             ck_core::Language::Go => Ok(ParseableLanguage::Go),
             ck_core::Language::CSharp => Ok(ParseableLanguage::CSharp),
             ck_core::Language::Zig => Ok(ParseableLanguage::Zig),
+            ck_core::Language::Elixir => Ok(ParseableLanguage::Elixir),
+            ck_core::Language::Heex => Ok(ParseableLanguage::Heex),
             _ => Err(anyhow::anyhow!(
                 "Language {:?} is not supported for parsing",
                 lang
@@ -347,6 +355,11 @@ fn chunk_generic_with_token_config(text: &str, model_name: Option<&str>) -> Resu
 }
 
 pub(crate) fn tree_sitter_language(language: ParseableLanguage) -> Result<tree_sitter::Language> {
+    // Elixir uses a different API (function instead of constant)
+    if language == ParseableLanguage::Elixir {
+        return Ok(tree_sitter_elixir::language());
+    }
+
     let ts_language = match language {
         ParseableLanguage::Python => tree_sitter_python::LANGUAGE,
         ParseableLanguage::TypeScript | ParseableLanguage::JavaScript => {
@@ -358,6 +371,8 @@ pub(crate) fn tree_sitter_language(language: ParseableLanguage) -> Result<tree_s
         ParseableLanguage::Go => tree_sitter_go::LANGUAGE,
         ParseableLanguage::CSharp => tree_sitter_c_sharp::LANGUAGE,
         ParseableLanguage::Zig => tree_sitter_zig::LANGUAGE,
+        ParseableLanguage::Heex => tree_sitter_heex::LANGUAGE,
+        ParseableLanguage::Elixir => unreachable!(), // Handled above
     };
 
     Ok(ts_language.into())
@@ -793,6 +808,14 @@ fn chunk_type_for_node(
                 | "error_set_declaration"
                 | "comptime_declaration"
         ),
+        ParseableLanguage::Elixir => matches!(
+            kind,
+            "call" | "anonymous_function" | "do_block" | "stab_clause" | "unary_operator" | "sigil"
+        ),
+        ParseableLanguage::Heex => matches!(
+            kind,
+            "fragment" | "tag" | "component" | "expression" | "directive"
+        ),
     };
 
     if !supported {
@@ -809,6 +832,21 @@ fn chunk_type_for_node(
         ParseableLanguage::CSharp if node.kind() == "variable_declaration" => {
             if !is_csharp_field_like(*node) {
                 return None;
+            }
+        }
+        ParseableLanguage::Elixir => {
+            // For Elixir, we need to determine the type based on context
+            // since node kinds like "call" are generic
+            // For now, use Module as default and refine in classify_chunk_kind
+            return Some(ChunkType::Module);
+        }
+        ParseableLanguage::Heex => {
+            // For HEEx templates, classify based on node kind
+            match kind {
+                "component" => return Some(ChunkType::Class),
+                "tag" => return Some(ChunkType::Function),
+                "expression" | "directive" => return Some(ChunkType::Function),
+                _ => return Some(ChunkType::Text),
             }
         }
         _ => {}
@@ -847,7 +885,8 @@ fn classify_chunk_kind(kind: &str) -> ChunkType {
         | "union_declaration"
         | "opaque_declaration"
         | "error_set_declaration" => ChunkType::Class,
-        "method_definition" | "method_declaration" | "defmacro" => ChunkType::Method,
+        "method_definition" | "method_declaration" | "defmacro" | "sigil" => ChunkType::Method,
+        "anonymous_function" | "stab_clause" => ChunkType::Function,
         "data_type"
         | "newtype"
         | "type_synonym"
@@ -864,7 +903,10 @@ fn classify_chunk_kind(kind: &str) -> ChunkType {
         | "const_declaration"
         | "variable_declaration"
         | "test_declaration"
-        | "comptime_declaration" => ChunkType::Module,
+        | "comptime_declaration"
+        | "call"
+        | "do_block"
+        | "unary_operator" => ChunkType::Module,
         _ => ChunkType::Text,
     }
 }
@@ -1098,6 +1140,8 @@ fn display_name_for_node(
         ParseableLanguage::Go => find_identifier(node, source, &["identifier", "type_identifier"]),
         ParseableLanguage::CSharp => find_identifier(node, source, &["identifier"]),
         ParseableLanguage::Zig => find_identifier(node, source, &["identifier"]),
+        ParseableLanguage::Elixir => find_identifier(node, source, &["identifier", "atom"]),
+        ParseableLanguage::Heex => find_identifier(node, source, &["tag_name", "component_name", "attribute_name"]),
     }
 }
 
@@ -1207,6 +1251,8 @@ fn is_method_context(node: tree_sitter::Node<'_>, language: ParseableLanguage) -
         ParseableLanguage::CSharp => false,
         ParseableLanguage::Haskell => false,
         ParseableLanguage::Zig => false,
+        ParseableLanguage::Elixir => false,
+        ParseableLanguage::Heex => false,
     }
 }
 
@@ -1389,6 +1435,8 @@ mod tests {
                 ChunkType::Class => 2,
                 ChunkType::Method => 3,
                 ChunkType::Module => 4,
+                ChunkType::TypeSpec => 5,
+                ChunkType::Documentation => 6,
             }
         }
 
@@ -1622,6 +1670,246 @@ end
         assert!(chunk_types.contains(&&ChunkType::Class)); // class
         assert!(chunk_types.contains(&&ChunkType::Module)); // module
         assert!(chunk_types.contains(&&ChunkType::Function)); // methods
+    }
+
+    fn chunk_elixir(text: &str) -> Result<Vec<Chunk>> {
+        chunk_language(text, ParseableLanguage::Elixir)
+    }
+
+    #[test]
+    fn test_chunk_elixir() {
+        let elixir_code = r#"
+defmodule Calculator do
+  @moduledoc "A simple calculator module"
+  
+  defstruct [:memory]
+
+  def new() do
+    %Calculator{memory: 0.0}
+  end
+  
+  def add(a, b) when is_number(a) and is_number(b) do
+    a + b
+  end
+
+  defp clear_memory do
+    0.0
+  end
+end
+
+defprotocol Formatter do
+  def format(value)
+end
+
+defimpl Formatter, for: Float do
+  def format(value) do
+    Float.to_string(value)
+  end
+end
+
+defmodule MathUtils do
+  def factorial(0), do: 1
+  def factorial(n) when n > 0 do
+    n * factorial(n - 1)
+  end
+end
+"#;
+        
+        let chunks = chunk_elixir(elixir_code).unwrap();
+        assert!(!chunks.is_empty());
+        
+        
+        // Should find modules, functions, protocols, and implementations
+        let chunk_types: Vec<&ChunkType> = chunks.iter().map(|c| &c.chunk_type).collect();
+        assert!(chunk_types.contains(&&ChunkType::Module)); // defmodule, defprotocol, defimpl
+        assert!(chunk_types.contains(&&ChunkType::Function)); // def, defp
+    }
+
+    #[test]
+    fn test_elixir_with_anonymous_functions() {
+        let elixir_code = r#"
+defmodule FunctionExamples do
+  def process_list(list) do
+    list
+    |> Enum.map(fn x -> x * 2 end)
+    |> Enum.filter(&(&1 > 10))
+  end
+
+  def create_adder(n) do
+    fn x -> x + n end
+  end
+end
+"#;
+        
+        let chunks = chunk_elixir(elixir_code).unwrap();
+        assert!(!chunks.is_empty());
+        
+        let chunk_types: Vec<&ChunkType> = chunks.iter().map(|c| &c.chunk_type).collect();
+        assert!(chunk_types.contains(&&ChunkType::Module));   // defmodule
+        assert!(chunk_types.contains(&&ChunkType::Function)); // def functions and anonymous functions
+    }
+
+    #[test]
+    fn test_elixir_mixed_constructs() {
+        let elixir_code = r#"
+defprotocol Serializable do
+  def serialize(data)
+end
+
+defmodule User do
+  defstruct [:name, :email, :age]
+  
+  def new(name, email, age) do
+    %User{name: name, email: email, age: age}
+  end
+  
+  defp validate_email(email) do
+    String.contains?(email, "@")
+  end
+end
+
+defimpl Serializable, for: User do
+  def serialize(%User{} = user) do
+    Jason.encode!(user)
+  end
+end
+"#;
+        
+        let chunks = chunk_elixir(elixir_code).unwrap();
+        assert!(!chunks.is_empty());
+        
+        // Should detect various Elixir constructs
+        let has_module = chunks.iter().any(|c| c.chunk_type == ChunkType::Module);
+        let has_function = chunks.iter().any(|c| c.chunk_type == ChunkType::Function);
+        
+        assert!(has_module);   // defprotocol, defmodule, defimpl
+        assert!(has_function); // def, defp
+    }
+
+    #[test]
+    fn test_elixir_advanced_syntax() {
+        let elixir_code = r#"
+defmodule AdvancedElixirFeatures do
+  @moduledoc """
+  Module demonstrating advanced Elixir syntax features.
+  """
+  
+  @type state :: :idle | :running | :stopped
+  @opaque internal_state :: {atom(), integer()}
+  
+  @spec start() :: {:ok, pid()} | {:error, term()}
+  def start() do
+    case GenServer.start(__MODULE__, []) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+  
+  @doc """
+  Process a list with comprehension and pattern matching
+  """
+  @spec process_items([term()]) :: [term()]
+  def process_items(items) do
+    for item <- items do
+      case item do
+        %{type: :special} -> 
+          with {:ok, result} <- transform_special(item),
+               {:ok, validated} <- validate_result(result) do
+            validated
+          else
+            {:error, _reason} -> nil
+          end
+        _ -> item
+      end
+    end
+  end
+  
+  defp transform_special(item) do
+    try do
+      result = quote do
+        unquote(item) |> String.upcase() |> String.trim()
+      end
+      {:ok, result}
+    rescue
+      e -> {:error, e}
+    catch
+      :exit, reason -> {:error, reason}
+    after
+      cleanup()
+    end
+  end
+  
+  @callback handle_event(term()) :: term()
+  @macrocallback handle_macro(term()) :: Macro.t()
+  
+  defmacro create_handler(name) do
+    quote do
+      def unquote(:"handle_#{name}")(event) do
+        IO.puts("Handling #{unquote(name)}: #{inspect(event)}")
+      end
+    end
+  end
+  
+  def string_operations do
+    regex = ~r/\d+/
+    words = ~w[hello world elixir]
+    string = ~s"This is a #{@module} string"
+    charlist = ~c'character list'
+    
+    if Regex.match?(regex, "123") do
+      {:ok, words}
+    else
+      {:error, "no match"}
+    end
+  end
+end
+
+@behaviour AdvancedElixirFeatures
+defmodule Implementation do
+  def handle_event(event), do: event
+end
+"#;
+        
+        let chunks = chunk_elixir(elixir_code).unwrap();
+        assert!(!chunks.is_empty());
+        
+        let chunk_types: Vec<&ChunkType> = chunks.iter().map(|c| &c.chunk_type).collect();
+        
+        // Verify we detect all the new chunk types for advanced Elixir syntax
+        assert!(chunk_types.contains(&&ChunkType::Module));          // defmodule, defprotocol, defimpl
+        assert!(chunk_types.contains(&&ChunkType::Function));        // def, defp, control flow (case, if, with, for, try)
+        assert!(chunk_types.contains(&&ChunkType::Method));          // defmacro, sigils, quote
+        assert!(chunk_types.contains(&&ChunkType::TypeSpec));        // @type, @spec, @callback, @macrocallback
+        assert!(chunk_types.contains(&&ChunkType::Documentation));   // @doc, @moduledoc
+        
+        // Count the different types to ensure we're getting comprehensive coverage
+        let type_counts = |chunk_type: &ChunkType| chunks.iter().filter(|c| &c.chunk_type == chunk_type).count();
+        
+        assert!(type_counts(&ChunkType::TypeSpec) >= 4);        // @type, @spec, @callback, @macrocallback, @behaviour
+        assert!(type_counts(&ChunkType::Documentation) >= 2);   // @doc, @moduledoc
+        assert!(type_counts(&ChunkType::Method) >= 5);          // defmacro, multiple sigils (~r, ~w, ~s, ~c), quote
+        assert!(type_counts(&ChunkType::Function) >= 15);       // Multiple def/defp, control flow constructs
+    }
+
+    #[test]
+    fn test_elixir_defstruct_detection() {
+        let elixir_code = r#"
+defmodule User do
+  defstruct [:name, :email, :age]
+  
+  def new(name, email, age) do
+    %User{name: name, email: email, age: age}
+  end
+end
+"#;
+        
+        let chunks = chunk_elixir(elixir_code).unwrap();
+        let chunk_types: Vec<&ChunkType> = chunks.iter().map(|c| &c.chunk_type).collect();
+        
+        // Should detect defstruct as Class type
+        assert!(chunk_types.contains(&&ChunkType::Class));
+        assert!(chunk_types.contains(&&ChunkType::Module));
+        assert!(chunk_types.contains(&&ChunkType::Function));
     }
 
     #[test]

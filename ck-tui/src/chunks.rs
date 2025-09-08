@@ -386,6 +386,8 @@ pub fn convert_chunks_to_meta(chunks: Vec<ck_chunk::Chunk>) -> Vec<IndexedChunkM
                 ck_chunk::ChunkType::Class => "class".to_string(),
                 ck_chunk::ChunkType::Method => "method".to_string(),
                 ck_chunk::ChunkType::Module => "module".to_string(),
+                ck_chunk::ChunkType::TypeSpec => "typespec".to_string(),
+                ck_chunk::ChunkType::Documentation => "documentation".to_string(),
                 ck_chunk::ChunkType::Text => "text".to_string(),
             }),
             breadcrumb: chunk.metadata.breadcrumb.clone(),
