@@ -140,6 +140,7 @@ pub enum ParseableLanguage {
     Zig,
     Elixir,
     Heex,
+    Erlang,
 }
 
 impl std::fmt::Display for ParseableLanguage {
@@ -156,6 +157,7 @@ impl std::fmt::Display for ParseableLanguage {
             ParseableLanguage::Zig => "zig",
             ParseableLanguage::Elixir => "elixir",
             ParseableLanguage::Heex => "heex",
+            ParseableLanguage::Erlang => "erlang",
         };
         write!(f, "{}", name)
     }
@@ -177,6 +179,7 @@ impl TryFrom<ck_core::Language> for ParseableLanguage {
             ck_core::Language::Zig => Ok(ParseableLanguage::Zig),
             ck_core::Language::Elixir => Ok(ParseableLanguage::Elixir),
             ck_core::Language::Heex => Ok(ParseableLanguage::Heex),
+            ck_core::Language::Erlang => Ok(ParseableLanguage::Erlang),
             _ => Err(anyhow::anyhow!(
                 "Language {:?} is not supported for parsing",
                 lang
@@ -360,6 +363,11 @@ pub(crate) fn tree_sitter_language(language: ParseableLanguage) -> Result<tree_s
         return Ok(tree_sitter_elixir::language());
     }
 
+    // Erlang uses a different API (function instead of constant)
+    if language == ParseableLanguage::Erlang {
+        return Ok(tree_sitter_erlang::LANGUAGE.into());
+    }
+
     let ts_language = match language {
         ParseableLanguage::Python => tree_sitter_python::LANGUAGE,
         ParseableLanguage::TypeScript | ParseableLanguage::JavaScript => {
@@ -373,6 +381,7 @@ pub(crate) fn tree_sitter_language(language: ParseableLanguage) -> Result<tree_s
         ParseableLanguage::Zig => tree_sitter_zig::LANGUAGE,
         ParseableLanguage::Heex => tree_sitter_heex::LANGUAGE,
         ParseableLanguage::Elixir => unreachable!(), // Handled above
+        ParseableLanguage::Erlang => unreachable!(), // Handled above
     };
 
     Ok(ts_language.into())
@@ -816,6 +825,18 @@ fn chunk_type_for_node(
             kind,
             "fragment" | "tag" | "component" | "expression" | "directive"
         ),
+        ParseableLanguage::Erlang => matches!(
+            kind,
+            "module_attribute"
+                | "fun_decl"
+                | "function_clause"
+                | "type_alias"
+                | "opaque"
+                | "record_decl"
+                | "callback"
+                | "spec"
+                | "pp_define"
+        ),
     };
 
     if !supported {
@@ -848,6 +869,10 @@ fn chunk_type_for_node(
                 "expression" | "directive" => return Some(ChunkType::Function),
                 _ => return Some(ChunkType::Text),
             }
+        }
+        ParseableLanguage::Erlang => {
+            // For Erlang, use Module as default and refine in classify_chunk_kind
+            return Some(ChunkType::Module);
         }
         _ => {}
     }
@@ -1141,7 +1166,12 @@ fn display_name_for_node(
         ParseableLanguage::CSharp => find_identifier(node, source, &["identifier"]),
         ParseableLanguage::Zig => find_identifier(node, source, &["identifier"]),
         ParseableLanguage::Elixir => find_identifier(node, source, &["identifier", "atom"]),
-        ParseableLanguage::Heex => find_identifier(node, source, &["tag_name", "component_name", "attribute_name"]),
+        ParseableLanguage::Heex => find_identifier(
+            node,
+            source,
+            &["tag_name", "component_name", "attribute_name"],
+        ),
+        ParseableLanguage::Erlang => find_identifier(node, source, &["atom"]),
     }
 }
 
@@ -1253,6 +1283,7 @@ fn is_method_context(node: tree_sitter::Node<'_>, language: ParseableLanguage) -
         ParseableLanguage::Zig => false,
         ParseableLanguage::Elixir => false,
         ParseableLanguage::Heex => false,
+        ParseableLanguage::Erlang => false,
     }
 }
 
@@ -1714,11 +1745,10 @@ defmodule MathUtils do
   end
 end
 "#;
-        
+
         let chunks = chunk_elixir(elixir_code).unwrap();
         assert!(!chunks.is_empty());
-        
-        
+
         // Should find modules, functions, protocols, and implementations
         let chunk_types: Vec<&ChunkType> = chunks.iter().map(|c| &c.chunk_type).collect();
         assert!(chunk_types.contains(&&ChunkType::Module)); // defmodule, defprotocol, defimpl
@@ -1740,12 +1770,12 @@ defmodule FunctionExamples do
   end
 end
 "#;
-        
+
         let chunks = chunk_elixir(elixir_code).unwrap();
         assert!(!chunks.is_empty());
-        
+
         let chunk_types: Vec<&ChunkType> = chunks.iter().map(|c| &c.chunk_type).collect();
-        assert!(chunk_types.contains(&&ChunkType::Module));   // defmodule
+        assert!(chunk_types.contains(&&ChunkType::Module)); // defmodule
         assert!(chunk_types.contains(&&ChunkType::Function)); // def functions and anonymous functions
     }
 
@@ -1774,15 +1804,15 @@ defimpl Serializable, for: User do
   end
 end
 "#;
-        
+
         let chunks = chunk_elixir(elixir_code).unwrap();
         assert!(!chunks.is_empty());
-        
+
         // Should detect various Elixir constructs
         let has_module = chunks.iter().any(|c| c.chunk_type == ChunkType::Module);
         let has_function = chunks.iter().any(|c| c.chunk_type == ChunkType::Function);
-        
-        assert!(has_module);   // defprotocol, defmodule, defimpl
+
+        assert!(has_module); // defprotocol, defmodule, defimpl
         assert!(has_function); // def, defp
     }
 
@@ -1869,26 +1899,31 @@ defmodule Implementation do
   def handle_event(event), do: event
 end
 "#;
-        
+
         let chunks = chunk_elixir(elixir_code).unwrap();
         assert!(!chunks.is_empty());
-        
+
         let chunk_types: Vec<&ChunkType> = chunks.iter().map(|c| &c.chunk_type).collect();
-        
+
         // Verify we detect all the new chunk types for advanced Elixir syntax
-        assert!(chunk_types.contains(&&ChunkType::Module));          // defmodule, defprotocol, defimpl
-        assert!(chunk_types.contains(&&ChunkType::Function));        // def, defp, control flow (case, if, with, for, try)
-        assert!(chunk_types.contains(&&ChunkType::Method));          // defmacro, sigils, quote
-        assert!(chunk_types.contains(&&ChunkType::TypeSpec));        // @type, @spec, @callback, @macrocallback
-        assert!(chunk_types.contains(&&ChunkType::Documentation));   // @doc, @moduledoc
-        
+        assert!(chunk_types.contains(&&ChunkType::Module)); // defmodule, defprotocol, defimpl
+        assert!(chunk_types.contains(&&ChunkType::Function)); // def, defp, control flow (case, if, with, for, try)
+        assert!(chunk_types.contains(&&ChunkType::Method)); // defmacro, sigils, quote
+        assert!(chunk_types.contains(&&ChunkType::TypeSpec)); // @type, @spec, @callback, @macrocallback
+        assert!(chunk_types.contains(&&ChunkType::Documentation)); // @doc, @moduledoc
+
         // Count the different types to ensure we're getting comprehensive coverage
-        let type_counts = |chunk_type: &ChunkType| chunks.iter().filter(|c| &c.chunk_type == chunk_type).count();
-        
-        assert!(type_counts(&ChunkType::TypeSpec) >= 4);        // @type, @spec, @callback, @macrocallback, @behaviour
-        assert!(type_counts(&ChunkType::Documentation) >= 2);   // @doc, @moduledoc
-        assert!(type_counts(&ChunkType::Method) >= 5);          // defmacro, multiple sigils (~r, ~w, ~s, ~c), quote
-        assert!(type_counts(&ChunkType::Function) >= 15);       // Multiple def/defp, control flow constructs
+        let type_counts = |chunk_type: &ChunkType| {
+            chunks
+                .iter()
+                .filter(|c| &c.chunk_type == chunk_type)
+                .count()
+        };
+
+        assert!(type_counts(&ChunkType::TypeSpec) >= 4); // @type, @spec, @callback, @macrocallback, @behaviour
+        assert!(type_counts(&ChunkType::Documentation) >= 2); // @doc, @moduledoc
+        assert!(type_counts(&ChunkType::Method) >= 5); // defmacro, multiple sigils (~r, ~w, ~s, ~c), quote
+        assert!(type_counts(&ChunkType::Function) >= 15); // Multiple def/defp, control flow constructs
     }
 
     #[test]
@@ -1902,10 +1937,10 @@ defmodule User do
   end
 end
 "#;
-        
+
         let chunks = chunk_elixir(elixir_code).unwrap();
         let chunk_types: Vec<&ChunkType> = chunks.iter().map(|c| &c.chunk_type).collect();
-        
+
         // Should detect defstruct as Class type
         assert!(chunk_types.contains(&&ChunkType::Class));
         assert!(chunk_types.contains(&&ChunkType::Module));

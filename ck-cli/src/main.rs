@@ -263,7 +263,7 @@ struct Cli {
 
     #[arg(
         long = "full-section",
-        help = "Return complete code sections (functions/classes) instead of just matching lines. Uses tree-sitter to identify semantic boundaries. Supported: Python, JavaScript, TypeScript, Haskell, Rust, Ruby, Elixir, HEEx"
+        help = "Return complete code sections (functions/classes) instead of just matching lines. Uses tree-sitter to identify semantic boundaries. Supported: Python, JavaScript, TypeScript, Haskell, Rust, Ruby, Go, C#, Zig, Elixir, HEEx, Erlang"
     )]
     full_section: bool,
 

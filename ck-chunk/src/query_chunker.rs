@@ -92,6 +92,7 @@ fn builtin_query(language: ParseableLanguage) -> Option<&'static str> {
         ParseableLanguage::Zig => Some(include_str!("../queries/zig/tags.scm")),
         ParseableLanguage::Elixir => Some(include_str!("../queries/elixir/tags.scm")),
         ParseableLanguage::Heex => Some(include_str!("../queries/elixir/heex.scm")),
+        ParseableLanguage::Erlang => Some(include_str!("../queries/erlang/tags.scm")),
     }
 }
 
