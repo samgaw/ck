@@ -1,3 +1,11 @@
+// Link the platform version stub on macOS
+#[cfg(target_os = "macos")]
+#[link(name = "platform_version_stub", kind = "static")]
+unsafe extern "C" {
+    // Reference the stub symbol to force linking
+    fn __isPlatformVersionAtLeast(platform_type: u32, major: u32, minor: u32, patch: u32) -> i32;
+}
+
 use anyhow::Result;
 use ck_core::{
     IncludePattern, SearchMode, SearchOptions, get_default_ckignore_content,
